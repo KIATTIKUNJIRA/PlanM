@@ -33,10 +33,12 @@ export async function internalJson<T = any>(path: string, opts?: { orgId?: strin
     return res.json();
   }
 
-  const supa = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supaKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supaUrl || !supaKey) {
+    throw new Error('Supabase env vars missing on client: set NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  }
+  const supa = createClient(supaUrl, supaKey);
   const { data: { user } } = await supa.auth.getUser();
 
   const headers: Record<string, string> = {
