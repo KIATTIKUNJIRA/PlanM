@@ -1,4 +1,8 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
+// Import lazily via require form to avoid TS resolution issues with certain moduleResolution settings.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const supabasePkg: any = require('@supabase/supabase-js');
+type SupabaseClient = typeof supabasePkg.SupabaseClient;
+const createClient: any = supabasePkg.createClient;
 import { Ticket, Asset } from 'ts-types'; // Example of using shared types
 
 // Lazily create the Supabase client only when env vars are present.

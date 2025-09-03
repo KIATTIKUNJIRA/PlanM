@@ -23,7 +23,8 @@ export function internalGet(input: string, init?: RequestInit) {
 // and optional orgId query parameter. Falls back to previous internalGet semantics
 // when executed server-side (no browser auth context).
 // Use the existing lazy supabase wrapper to avoid build-time module issues
-import { supabase } from '@/lib/supabase';
+// Defer supabase usage via dynamic require to avoid type resolution issues in build
+let _supabase: any; function getSupabase() { if (!_supabase) { try { _supabase = require('@/lib/supabase').supabase; } catch { _supabase = null; } } return _supabase; }
 
 export async function internalJson<T = any>(path: string, opts?: { orgId?: string }): Promise<T> {
   // If executing on server (no window), delegate to internalGet (cannot derive user id)
@@ -36,8 +37,11 @@ export async function internalJson<T = any>(path: string, opts?: { orgId?: strin
 
   let userId: string | undefined;
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    userId = user?.id;
+    const supa = getSupabase();
+    if (supa) {
+      const { data: { user } } = await supa.auth.getUser();
+      userId = user?.id;
+    }
   } catch (e) {
     // If env missing or not initialised, ignore user injection
     userId = undefined;
