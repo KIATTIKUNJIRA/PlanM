@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node scripts/ensure-port-3000.mjs && next dev -p 3000",
     "dev:clean": "rimraf .next && kill-port 3000 3001 && node scripts/ensure-port-3000.mjs && next dev -p 3000",
-    "build": "next build",
+  "prebuild": "node scripts/prevent-page-tests.cjs",
+  "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest --config vitest.config.mts",
