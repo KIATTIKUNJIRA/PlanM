@@ -1,0 +1,14 @@
+{
+  "name": "ts-types",
+  "version": "1.0.0",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "lint": "eslint . --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "eslint": "^8.23.1",
+    "typescript": "^5.0.4"
+  }
+}
