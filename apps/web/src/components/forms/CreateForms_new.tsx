@@ -2,7 +2,7 @@ import dynamic from "next/dynamic";
 const MapPicker = dynamic(() => import("@/components/map/MapPicker"), { ssr: false });
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useOrgs } from "@/hooks/useOrgs";
+import useOrgs from "@/hooks/useOrgs";
 
 /** ---------- Small helpers ---------- */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -203,8 +203,8 @@ export function ProjectForm() {
   }, [orgs, orgId]);
 
   // ช่วยให้ MapPicker แสดงจุดเมื่อมีค่า lat/lng แล้ว
-  const mapValue = lat && lng
-    ? { lat: Number(lat), lng: Number(lng) }
+  const mapValue: [number, number] | null = lat && lng
+    ? [Number(lat), Number(lng)]
     : null;
 
   const submit = async (e: React.FormEvent) => {

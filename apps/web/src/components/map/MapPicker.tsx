@@ -3,8 +3,8 @@
 import { useEffect, useRef } from "react";
 
 type Props = {
-  /** [lat, lng] */
-  value?: [number, number];
+  /** [lat, lng]; allow null for 'unset' */
+  value?: [number, number] | null;
   /** ส่งค่ากลับเมื่อผู้ใช้คลิกหรือ drag marker */
   onChange?: (lat: number, lng: number) => void;
   /** ความสูงของแผนที่ (พิกเซล) */
