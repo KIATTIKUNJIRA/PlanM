@@ -22,7 +22,8 @@ export function internalGet(input: string, init?: RequestInit) {
 // Lightweight client-side JSON helper that includes the acting user id (if available)
 // and optional orgId query parameter. Falls back to previous internalGet semantics
 // when executed server-side (no browser auth context).
-import { createClient } from '@supabase/supabase-js';
+// Use the existing lazy supabase wrapper to avoid build-time module issues
+import { supabase } from '@/lib/supabase';
 
 export async function internalJson<T = any>(path: string, opts?: { orgId?: string }): Promise<T> {
   // If executing on server (no window), delegate to internalGet (cannot derive user id)
@@ -33,17 +34,18 @@ export async function internalJson<T = any>(path: string, opts?: { orgId?: strin
     return res.json();
   }
 
-  const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supaKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supaUrl || !supaKey) {
-    throw new Error('Supabase env vars missing on client: set NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  let userId: string | undefined;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    userId = user?.id;
+  } catch (e) {
+    // If env missing or not initialised, ignore user injection
+    userId = undefined;
   }
-  const supa = createClient(supaUrl, supaKey);
-  const { data: { user } } = await supa.auth.getUser();
 
   const headers: Record<string, string> = {
     'x-internal-key': PUBLIC_KEY || '',
-    ...(user?.id ? { 'x-user-id': user.id } : {}),
+  ...(userId ? { 'x-user-id': userId } : {}),
   };
   if (!headers['x-internal-key']) delete headers['x-internal-key'];
 
