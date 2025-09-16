@@ -5,10 +5,11 @@
     "build": "pnpm --filter \"./apps/**\" build",
     "dev": "pnpm --filter \"./apps/**\" --parallel dev",
     "lint": "pnpm --filter \"./packages/**\" lint",
-    "typecheck": "pnpm --filter \"./packages/**\" typecheck"
+    "typecheck": "pnpm --filter \"./packages/**\" typecheck",
+    "fetch:thai": "node scripts/fetch-thai-locations.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.0.4"
+    "typescript": "^5.9.2"
   },
   "packageManager": "pnpm@9.1.0"
 }

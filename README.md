@@ -25,6 +25,11 @@ Run unit tests:
 pnpm -C apps/web test
 ```
 
+### Thai Locations Dataset
+Run `pnpm fetch:thai` to download & generate the compact hierarchical Thailand location JSON (`apps/web/public/data/thaiLocations.full.json`). The app lazily loads this file (not bundled) and merges into a minimal in-bundle seed to keep initial payload small.
+
+Transformation keeps only: province, district (อำเภอ/เขต), subdistrict (ตำบล/แขวง), postal. Source: thailand-geography-json (MIT). Re-run the script to update.
+
 Run E2E (Playwright):
 
 ```bash

@@ -1,5 +1,4 @@
 import "leaflet/dist/leaflet.css";
-import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import '@/styles/globals.css'
 import type { AppProps } from 'next/app'
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -8,6 +7,7 @@ import { Toaster } from 'react-hot-toast';
 import { CommandPaletteProvider } from '@/components/CommandPalette';
 import { HealthProvider, useHealth } from '@/hooks/useHealthMonitor';
 import { HealthDrawer } from '@/components/HealthDrawer';
+import { ConfirmProvider } from '@/components/ConfirmProvider';
 
 function FloatingHealthBadge() {
   const { latest, setOpen } = useHealth();
@@ -27,10 +27,12 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <HealthProvider>
       <CommandPaletteProvider>
-        <Toaster position="top-right" />
-        <Component {...pageProps} />
-        <FloatingHealthBadge />
-        <HealthDrawer />
+        <ConfirmProvider>
+          <Toaster position="top-right" />
+          <Component {...pageProps} />
+          <FloatingHealthBadge />
+          <HealthDrawer />
+        </ConfirmProvider>
       </CommandPaletteProvider>
     </HealthProvider>
   );

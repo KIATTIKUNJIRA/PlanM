@@ -1,18 +1,73 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import Head from 'next/head';
-import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { supabase } from '@/lib/supabase';
 import { showPgErrorToast } from '@/lib/dbErrors';
 import { afterProjectChange } from '@/lib/afterProjectChange';
 import useOrgs, { Org } from '@/hooks/useOrgs';
+import useThaiProvinces from '@/hooks/useThaiProvinces';
+import useThaiProvinceHierarchy, { useAmphures, useTambons } from '@/hooks/useThaiProvinceHierarchy';
+import useThaiGeo, { findPostal } from '@/hooks/useThaiGeo';
+import ThaiDatePicker from '@/components/ThaiDatePicker';
+import DashboardLayout from '@/components/DashboardLayout';
+import MapDrawInner, { MapDrawInnerHandle } from '@/components/MapDrawInner';
 import { PROJECT_TYPE_OPTIONS } from '@/constants/projectTypes';
-import type { Feature, FeatureCollection } from 'geojson';
-import { centerLatLng } from '@/lib/geo';
+import { THAI_PROVINCES } from '@/constants/thaiProvinces';
+import { z } from 'zod';
 
-const MapDraw = dynamic(() => import('@/components/map/MapDraw'), { ssr: false });
+// --- Schema สำหรับตรวจสอบข้อมูลก่อนบันทึก ---
+const ProjectSchema = z.object({
+  org_id: z.string().min(1, 'ต้องเลือกองค์กร'),
+  name: z.string().trim().min(1, 'ต้องระบุชื่อโครงการ'),
+  type: z.string().min(1),
+  status: z.enum(['planned', 'active', 'archived']),
+  code: z.string().trim().max(64).nullable().optional(),
+  address: z.string().trim().max(255).nullable().optional(),
+  province: z.string().trim().max(128).nullable().optional(),
+  district: z.string().trim().max(128).nullable().optional(),
+  subdistrict: z.string().trim().max(128).nullable().optional(),
+  postal_code: z.string().trim().max(10).nullable().optional(),
+  project_manager: z.string().trim().max(128).nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  start_date: z.string().nullable().optional(),
+  end_date: z.string().nullable().optional()
+}).strict();
 
+type ProjectInput = z.input<typeof ProjectSchema>;
+
+// ฟังก์ชันบันทึกข้อมูลโครงการลง Supabase
+async function insertProject(payload: ProjectInput, dateVariants: { startKey: string; endKey: string }[]) {
+  let lastErr: any = null; let dataOk: any = null;
+  for (const v of dateVariants) {
+    let attempt: Record<string, any> = { ...payload };
+
+    // รองรับชื่อคอลัมน์วันที่ที่อาจต่างกัน เช่น start_date / started_at (แต่ตอนนี้ใช้ start_date/end_date เท่านั้น)
+    if (payload.start_date && v.startKey !== 'start_date') {
+      attempt[v.startKey] = payload.start_date;
+      delete attempt.start_date;
+    }
+    if (payload.end_date && v.endKey !== 'end_date') {
+      attempt[v.endKey] = payload.end_date;
+      delete attempt.end_date;
+    }
+
+    // ลบ key ที่ค่าเป็น undefined ออก
+    Object.keys(attempt).forEach(k => attempt[k] === undefined && delete attempt[k]);
+
+    // พยายาม insert ลงตาราง projects
+    const { data, error } = await supabase.from('projects').insert(attempt).select('id').single();
+    if (!error) { dataOk = data; lastErr = null; break; }
+    lastErr = error;
+
+    if (error.code === '42703') continue; // ถ้ามีคอลัมน์ไม่ตรง ให้ลองรอบถัดไป
+    break;
+  }
+  if (lastErr && !dataOk) throw lastErr;
+  return dataOk;
+}
+
+// UI Card Wrapper
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -23,182 +78,215 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 }
 
 export default function NewProjectPage() {
+  // Hooks: data
+  const { provinces: dynamicProvinces } = useThaiProvinces();
+  const provincesList = (dynamicProvinces && dynamicProvinces.length) ? dynamicProvinces : THAI_PROVINCES;
+
+  const { provinces: provincesHier, loading: hierLoading, error: hierError } = useThaiProvinceHierarchy();
+
   const router = useRouter();
   const { orgs, loading: orgLoading } = useOrgs();
+
+  // Form state
   const [orgId, setOrgId] = useState<string>('');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
-  const [ptype, setPtype] = useState<string>('raw_land');
+  const [ptype, setPtype] = useState<string>(PROJECT_TYPE_OPTIONS[0].value);
   const [status, setStatus] = useState<'planned' | 'active' | 'archived'>('planned');
+
   const [address, setAddress] = useState('');
   const [province, setProvince] = useState('');
-  const [pm, setPm] = useState('');
+  const [provinceId, setProvinceId] = useState<number | undefined>(undefined);
+  const [district, setDistrict] = useState('');
+  const [districtId, setDistrictId] = useState<number | undefined>(undefined);
+  const [subdistrict, setSubdistrict] = useState('');
+  const [subdistrictId, setSubdistrictId] = useState<number | undefined>(undefined);
+  const [postal, setPostal] = useState('');
+
+  const amphures = useAmphures(provincesHier, provinceId);
+  const tambons = useTambons(amphures, districtId);
+
   const [start, setStart] = useState<string>('');
   const [end, setEnd] = useState<string>('');
-
-  const [geometry, setGeometry] = useState<FeatureCollection | Feature | null>(null);
-  const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [latitude, setLatitude] = useState<string>('');
+  const [longitude, setLongitude] = useState<string>('');
+  const [geometry, setGeometry] = useState<any>(null);
+  const [pm, setPm] = useState('');
+  const [showGeometryModal, setShowGeometryModal] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const mapRef = useRef<MapDrawInnerHandle | null>(null);
 
+  // UI state
+  const [showMissingModal, setShowMissingModal] = useState(false);
+  const [missingFields, setMissingFields] = useState<string[]>([]);
+
+  // Effects: initialize defaults and cascading resets
   useEffect(() => {
     if (!orgId && orgs.length) setOrgId(orgs[0].id);
   }, [orgs, orgId]);
 
-  // เตือนเมื่อออกหน้าโดยยังไม่บันทึก
   useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (dirty && !saving) {
-        e.preventDefault(); e.returnValue = '';
-      }
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [dirty, saving]);
+    // reset district/subdistrict/postal when province changes
+    setDistrict('');
+    setDistrictId(undefined);
+    setSubdistrict('');
+    setSubdistrictId(undefined);
+    setPostal('');
+  }, [provinceId]);
 
-  const canCreate = useMemo(() => {
-    if (!orgId || !name.trim() || !ptype) return false;
-    if (start && end && new Date(end) < new Date(start)) return false;
-    return true;
-  }, [orgId, name, ptype, start, end]);
+  useEffect(() => {
+    // reset subdistrict/postal when district changes
+    setSubdistrict('');
+    setSubdistrictId(undefined);
+    setPostal('');
+  }, [districtId]);
 
-  function onGeoChange(geo: FeatureCollection | Feature | null, c: { lat: number; lng: number } | null) {
-    setGeometry(geo);
-    setCenter(c);
-    setDirty(true);
-  }
+  useEffect(() => {
+    if (province && district && subdistrict) {
+      const zipFromHier = tambons.find(t => t.id === subdistrictId)?.zip_code?.toString();
+      if (zipFromHier) setPostal(zipFromHier);
+      else setPostal(findPostal(province, district, subdistrict));
+    }
+  }, [province, district, subdistrict, subdistrictId, tambons]);
 
-  async function doSubmit(mode: 'draft' | 'create') {
+  // Submit handler
+  async function doSubmit() {
     try {
       setSaving(true);
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('กรุณาเข้าสู่ระบบก่อน'); return;
-      }
-      if (!canCreate) {
-        alert('กรอกข้อมูลไม่ครบหรือไม่ถูกต้อง'); return;
-      }
+      if (!user) { alert('กรุณาเข้าสู่ระบบก่อน'); return; }
 
-      const payload: any = {
+      const latNum = latitude ? Number(latitude) : null;
+      const lngNum = longitude ? Number(longitude) : null;
+
+      const base: ProjectInput = {
         org_id: orgId,
         name: name.trim(),
-        code: code || null,
-        type: ptype,                // enum ตาม projectTypes
-        status: mode === 'draft' ? 'planned' : status,
+        code: code ? code.trim() : null,
+        type: ptype,
+        status,
         address: address || null,
         province: province || null,
+        district: district || null,
+        subdistrict: subdistrict || null,
+        postal_code: postal || null,
         project_manager: pm || null,
-        start_date: start || null,
-        end_date: end || null,
-        latitude: center?.lat ?? null,
-        longitude: center?.lng ?? null,
-        geometry: geometry ? (geometry as any) : null,
+        latitude: latNum,
+        longitude: lngNum,
+        start_date: start || undefined,
+        end_date: end || undefined,
       };
 
-      // insert + select id เพื่อ redirect
-      const { data, error } = await supabase
-        .from('projects')
-        .insert(payload)
-        .select('id')
-        .single();
+      const parsed = ProjectSchema.safeParse(base);
+      if (!parsed.success) { alert('ข้อมูลไม่ถูกต้อง'); return; }
 
-      if (error) throw error;
-
-      // refresh cache หน้า home/stat
+      const dateVariants = [{ startKey: 'start_date', endKey: 'end_date' }];
+      const inserted = await insertProject(parsed.data, dateVariants);
       await afterProjectChange(orgId);
-
-      const id = data?.id;
+      const id = inserted?.id;
       if (id) {
         setDirty(false);
         router.replace(`/projects/${id}?created=1`);
       } else {
-        // กันเคส RLS select ไม่ผ่าน (ไม่น่าเกิดเพราะมี policy select แล้ว)
         router.replace('/projects');
       }
     } catch (err: any) {
-  // Fallback toast via alert; can be replaced with react-hot-toast
-  showPgErrorToast(err, (m) => alert(m), { entity: 'โครงการ', labels: { code: 'รหัสโครงการ', type: 'ประเภท', latitude: 'ละติจูด', longitude: 'ลองจิจูด' } });
+      console.error('[projects/new] insert failure', err);
+      showPgErrorToast(err, (m) => alert(m), { entity: 'โครงการ' });
     } finally {
       setSaving(false);
     }
   }
 
+  const canCreate = useMemo(() => {
+    if (!orgId || !name.trim() || !ptype) return false;
+    if (!address.trim() || !province || !district || !subdistrict) return false;
+    if (!start || !end) return false;
+    if (new Date(end) <= new Date(start)) return false;
+    return true;
+  }, [orgId, name, ptype, address, province, district, subdistrict, start, end]);
+
+  // Reset form to initial values
+  function resetForm() {
+    setOrgId(orgs.length ? orgs[0].id : '');
+    setName('');
+    setCode('');
+    setPtype(PROJECT_TYPE_OPTIONS[0].value);
+    setStatus('planned');
+
+    setAddress('');
+    setProvince('');
+    setProvinceId(undefined);
+    setDistrict('');
+    setDistrictId(undefined);
+    setSubdistrict('');
+    setSubdistrictId(undefined);
+    setPostal('');
+
+    setStart('');
+    setEnd('');
+    setLatitude('');
+    setLongitude('');
+    setPm('');
+
+    setDirty(false);
+  }
+
   return (
     <>
       <Head><title>New Project</title></Head>
+      <DashboardLayout title="สร้างโครงการใหม่">
+        {/* Header */}
 
-      <div className="px-4 sm:px-6 lg:px-8 py-4">
-        {/* Header + Actions */}
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="text-sm text-gray-500">
-              <Link href="/projects" className="hover:underline">Projects</Link> / New
-            </div>
-            <h1 className="text-xl font-semibold">สร้างโครงการใหม่</h1>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Link href="/projects" className="rounded-lg border px-4 py-2 hover:bg-gray-50">Cancel</Link>
-            <button
-              disabled={!orgId || saving}
-              onClick={() => doSubmit('draft')}
-              className="rounded-lg border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
-            >
-              {saving ? 'Saving…' : 'Save Draft'}
-            </button>
-            <button
-              disabled={!canCreate || saving}
-              onClick={() => doSubmit('create')}
-              className="rounded-lg bg-black text-white px-4 py-2 hover:opacity-90 disabled:opacity-60"
-            >
-              {saving ? 'Saving…' : 'Create Project ▶'}
-            </button>
-          </div>
-        </div>
-
-        {/* Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left */}
-          <div className="lg:col-span-5 space-y-4">
-            <Card title="📛 Identity">
-              {/* Organization */}
-              <label className="block">
-                <span className="text-sm text-gray-600">Organization *</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2"
-                  value={orgId}
-                  onChange={(e) => { setOrgId(e.target.value); setDirty(true); }}
-                >
-                  {orgLoading && <option>Loading…</option>}
-                  {!orgLoading && orgs.length === 0 && <option value="">(ยังไม่มีองค์กร)</option>}
-                  {orgs.map((o: Org) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
-              </label>
+          <div className="lg:col-span-6 space-y-4">
 
-              <label className="block">
-                <span className="text-sm text-gray-600">ชื่อโครงการ *</span>
-                <input
-                  className="mt-1 w-full rounded-lg border px-3 py-2"
-                  value={name}
-                  onChange={(e) => { setName(e.target.value); setDirty(true); }}
-                  placeholder="เช่น โครงการ A"
-                />
-              </label>
+            <Card title="">
+              <div className="flex justify-center text-lg font-semibold">
+                <h1>ข้อมูลโครงการ</h1>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="text-sm text-gray-600">รหัสโครงการ</span>
+                  <span className="text-sm text-gray-600">องค์กร</span>
+                  <select
+                    className="mt-1 w-full rounded-lg border px-3 py-2"
+                    value={orgId}
+                    onChange={(e) => { setOrgId(e.target.value); setDirty(true); }}
+                  >
+                    {orgLoading && <option>กำลังโหลด…</option>}
+                    {!orgLoading && orgs.length === 0 && <option value="">(ยังไม่มีองค์กร)</option>}
+                    {orgs.map((o: Org) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-sm text-gray-600">รหัส</span>
                   <input
                     className="mt-1 w-full rounded-lg border px-3 py-2"
                     value={code}
                     onChange={(e) => { setCode(e.target.value); setDirty(true); }}
-                    placeholder="ไม่บังคับ (unique ในองค์กร)"
+                    placeholder="เช่น PRJ-2025-001"
+                  />
+                </label>
+
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-sm text-gray-600">ชื่อ</span>
+                  <input
+                    className="mt-1 w-full rounded-lg border px-3 py-2"
+                    value={name}
+                    onChange={(e) => { setName(e.target.value); setDirty(true); }}
+                    placeholder="เช่น โครงการก่อสร้างถนน"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="text-sm text-gray-600">ประเภทโครงการ *</span>
+                  <span className="text-sm text-gray-600">ประเภท</span>
                   <select
                     className="mt-1 w-full rounded-lg border px-3 py-2"
                     value={ptype}
@@ -211,107 +299,184 @@ export default function NewProjectPage() {
                 </label>
               </div>
 
-              <label className="block">
-                <span className="text-sm text-gray-600">สถานะ</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2"
-                  value={status}
-                  onChange={(e) => { setStatus(e.target.value as any); setDirty(true); }}
-                >
-                  <option value="planned">Planned</option>
-                  <option value="active">Active</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </label>
-            </Card>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-sm text-gray-600">ผู้จัดการโครงการ</span>
+                  <input
+                    className="mt-1 w-full rounded-lg border px-3 py-2"
+                    value={pm}
+                    onChange={(e) => { setPm(e.target.value); setDirty(true); }}
+                    placeholder="เช่น นางสาวน้ำ ดอกไม้ (m)"
+                  />
+                </label>
 
-            <Card title="📮 Address & Admin">
+                <label className="block">
+                  <span className="text-sm text-gray-600">สถานะ</span>
+                  <select
+                    className="mt-1 w-full rounded-lg border px-3 py-2"
+                    value={status}
+                    onChange={(e) => { setStatus(e.target.value as any); setDirty(true); }}
+                  >
+                    <option value="planned">วางแผน</option>
+                    <option value="active">กำลังดำเนินการ</option>
+                    <option value="archived">เก็บถาวร</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-sm text-gray-600">วันเริ่มต้น</span>
+                  <ThaiDatePicker value={start} onChange={(iso) => { setStart(iso); setDirty(true); }} />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-gray-600">วันสิ้นสุด</span>
+                  <ThaiDatePicker value={end} onChange={(iso) => { setEnd(iso); setDirty(true); }} />
+                  {(start && end && new Date(end) <= new Date(start)) &&
+                    <div className="mt-1 text-[11px] text-red-600">วันสิ้นสุดต้องมากกว่าวันเริ่มต้น</div>}
+                </label>
+              </div>
+
               <label className="block">
                 <span className="text-sm text-gray-600">ที่อยู่</span>
                 <input
                   className="mt-1 w-full rounded-lg border px-3 py-2"
                   value={address}
                   onChange={(e) => { setAddress(e.target.value); setDirty(true); }}
+                  placeholder="เช่น 123 หมู่ 4 บ.ห้วยทราย"
                 />
               </label>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="text-sm text-gray-600">จังหวัด</span>
-                  <input
+                  <select
                     className="mt-1 w-full rounded-lg border px-3 py-2"
-                    value={province}
-                    onChange={(e) => { setProvince(e.target.value); setDirty(true); }}
-                  />
+                    value={provinceId || ''}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : undefined;
+                      setProvinceId(val);
+                      const name = provincesHier.find(p => p.id === val)?.name_th || '';
+                      setProvince(name);
+                      setDirty(true);
+                    }}
+                  >
+                    <option value="">เลือกจังหวัด</option>
+                    {hierLoading && <option disabled>กำลังโหลดข้อมูล...</option>}
+                    {hierError && <option disabled>โหลดข้อมูลไม่สำเร็จ</option>}
+                    {provincesHier.map(p => <option key={p.id} value={p.id}>{p.name_th}</option>)}
+                  </select>
                 </label>
+
                 <label className="block">
-                  <span className="text-sm text-gray-600">Project Manager</span>
-                  <input
-                    className="mt-1 w-full rounded-lg border px-3 py-2"
-                    value={pm}
-                    onChange={(e) => { setPm(e.target.value); setDirty(true); }}
-                  />
+                  <span className="text-sm text-gray-600">อำเภอ/เขต</span>
+                  <select
+                    disabled={!provinceId}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 disabled:bg-gray-100"
+                    value={districtId || ''}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : undefined;
+                      setDistrictId(val);
+                      const name = amphures.find(a => a.id === val)?.name_th || '';
+                      setDistrict(name);
+                      setDirty(true);
+                    }}
+                  >
+                    <option value="">เลือกอำเภอ</option>
+                    {amphures.map(a => <option key={a.id} value={a.id}>{a.name_th}</option>)}
+                  </select>
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="text-sm text-gray-600">วันเริ่มโครงการ</span>
-                  <input
-                    type="date"
-                    className="mt-1 w-full rounded-lg border px-3 py-2"
-                    value={start}
-                    onChange={(e) => { setStart(e.target.value); setDirty(true); }}
-                  />
+                  <span className="text-sm text-gray-600">ตำบล/แขวง</span>
+                  <select
+                    disabled={!districtId}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 disabled:bg-gray-100"
+                    value={subdistrictId || ''}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : undefined;
+                      setSubdistrictId(val);
+                      const name = tambons.find(t => t.id === val)?.name_th || '';
+                      setSubdistrict(name);
+                      setDirty(true);
+                    }}
+                  >
+                    <option value="">เลือกตำบล</option>
+                    {tambons.map(t => <option key={t.id} value={t.id}>{t.name_th}</option>)}
+                  </select>
                 </label>
+
                 <label className="block">
-                  <span className="text-sm text-gray-600">วันสิ้นสุด</span>
+                  <span className="text-sm text-gray-600">รหัสไปรษณีย์</span>
                   <input
-                    type="date"
-                    className="mt-1 w-full rounded-lg border px-3 py-2"
-                    value={end}
-                    onChange={(e) => { setEnd(e.target.value); setDirty(true); }}
+                    readOnly
+                    className="mt-1 w-full rounded-lg border px-3 py-2 bg-gray-50"
+                    value={postal}
                   />
                 </label>
               </div>
             </Card>
-          </div>
 
-          {/* Right */}
-          <div className="lg:col-span-7 space-y-4">
-            <Card title="🗺️ Location & Geometry">
-              <MapDraw
-                value={geometry}
-                onChange={(geo, c) => {
-                  setGeometry(geo);
-                  setCenter(c ?? centerLatLng(geo));
-                  setDirty(true);
-                }}
-                height={560}
-              />
+          </div>
+          <div className="lg:col-span-6 space-y-4">
+            <Card title="แผนที่">
+              <MapDrawInner ref={mapRef} initialGeometry={geometry} onChange={(g) => setGeometry(g)} />
             </Card>
           </div>
         </div>
 
-        {/* Sticky footer (mobile-friendly) */}
-        <div className="sticky bottom-0 left-0 right-0 bg-white/80 backdrop-blur border-t mt-6 py-3 px-4 flex items-center justify-end gap-2">
-          <Link href="/projects" className="rounded-lg border px-4 py-2 hover:bg-gray-50">← Back</Link>
-          <button
-            disabled={!orgId || saving}
-            onClick={() => doSubmit('draft')}
-            className="rounded-lg border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
-          >
-            {saving ? 'Saving…' : 'Save Draft'}
-          </button>
+        {/* Footer */}
+        <div className="sticky bottom-0 left-0 right-0 mt-6 py-3 px-4 flex items-center justify-end gap-2">
+          <button type="button" onClick={resetForm} className="rounded-lg border px-4 py-2 bg-white hover:bg-gray-50">ล้างข้อมูล</button>
           <button
             disabled={!canCreate || saving}
-            onClick={() => doSubmit('create')}
+            onClick={() => doSubmit()}
             className="rounded-lg bg-black text-white px-4 py-2 hover:opacity-90 disabled:opacity-60"
           >
-            {saving ? 'Saving…' : 'Create Project ▶'}
+            {saving ? 'กำลังบันทึก…' : 'สร้างโครงการ'}
           </button>
+          <button type="button" onClick={() => mapRef.current?.clear()} className="rounded-lg border px-3 py-1 bg-white hover:bg-gray-50">ล้าง Geometry</button>
+          <button type="button" onClick={() => setShowGeometryModal(true)} className="rounded-lg border px-4 py-2 bg-white hover:bg-gray-50">แสดง Geometry</button>
         </div>
-      </div>
+      </DashboardLayout>
+
+      {/* Modal แจ้งเตือนข้อมูลที่ขาด */}
+      {showMissingModal && (
+        <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 2147483647 }}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative max-w-lg w-full bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-lg font-semibold mb-3">กรุณากรอกข้อมูลให้ครบ</h2>
+            <ul className="list-disc pl-5 text-sm mb-4">
+              {missingFields.map((m, i) => <li key={i}>{m}</li>)}
+            </ul>
+            <div className="flex justify-end">
+              <button className="rounded-lg border px-4 py-2 mr-2" onClick={() => setShowMissingModal(false)}>ปิด</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Geometry viewer modal */}
+      {showGeometryModal && (
+        <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 2147483647 }}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative max-w-3xl w-full bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-lg font-semibold mb-3">Geometry (GeoJSON)</h2>
+            <div className="mb-4 max-h-[60vh] overflow-auto text-sm font-mono bg-gray-50 p-3 rounded">
+              {geometry ? (
+                <pre className="whitespace-pre-wrap">{JSON.stringify(geometry, null, 2)}</pre>
+              ) : (
+                <div className="text-gray-600">ยังไม่มี Geometry ที่วาดบนแผนที่</div>
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button className="rounded-lg border px-4 py-2" onClick={() => setShowGeometryModal(false)}>ปิด</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

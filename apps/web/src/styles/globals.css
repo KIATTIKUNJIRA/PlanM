@@ -1,3 +1,32 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Custom pin icon for MapDrawInner text replacement */
+.pm-pin-icon .pm-pin-wrapper { position: relative; width:24px; height:24px; }
+.pm-pin-icon .pm-pin { width:14px; height:14px; background:#dc2626; border-radius:50% 50% 50% 0; position:absolute; left:50%; top:4px; transform:translateX(-50%) rotate(-45deg); box-shadow:0 1px 2px rgba(0,0,0,0.25); }
+.pm-pin-icon .pm-pin:after { content:""; position:absolute; left:50%; top:50%; width:5px; height:5px; background:#fff; border-radius:50%; transform:translate(-50%,-50%); }
+
+/* Hide unwanted centered alert modal globally (matches the fixed centered modal snippet)
+	 This removes the overlay described: fixed center, transform-based centering, role="alert" aria-modal="true" */
+[role="alert"][aria-modal="true"].fixed[class*="-translate-x-1/2"][class*="-translate-y-1/2"] {
+	display: none !important;
+}
+
+/* Hide the fixed dark backdrop used by the centered alert */
+.fixed.inset-0.bg-black.bg-opacity-40[aria-hidden="true"] {
+	display: none !important;
+}
+
+/* Remove the default Leaflet shadow pane (visual-only) without touching map tool code */
+.leaflet-pane.leaflet-shadow-pane {
+	display: none !important;
+	visibility: hidden !important;
+}
+
+/* Hide only <img> elements inside the Leaflet marker pane (marker images will be invisible)
+   This preserves the pane element itself so non-img marker content or interactions remain available. */
+.leaflet-pane.leaflet-marker-pane img {
+	display: none !important;
+	visibility: hidden !important;
+}
