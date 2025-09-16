@@ -7,6 +7,7 @@ import { Toaster } from 'react-hot-toast';
 import { CommandPaletteProvider } from '@/components/CommandPalette';
 import { HealthProvider, useHealth } from '@/hooks/useHealthMonitor';
 import { HealthDrawer } from '@/components/HealthDrawer';
+import { ConfirmProvider } from '@/components/ConfirmProvider';
 
 function FloatingHealthBadge() {
   const { latest, setOpen } = useHealth();
@@ -26,10 +27,12 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <HealthProvider>
       <CommandPaletteProvider>
-        <Toaster position="top-right" />
-        <Component {...pageProps} />
-        <FloatingHealthBadge />
-        <HealthDrawer />
+        <ConfirmProvider>
+          <Toaster position="top-right" />
+          <Component {...pageProps} />
+          <FloatingHealthBadge />
+          <HealthDrawer />
+        </ConfirmProvider>
       </CommandPaletteProvider>
     </HealthProvider>
   );

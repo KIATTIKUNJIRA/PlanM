@@ -241,13 +241,16 @@ export function ProjectForm() {
         longitude: Number(longitude),
       };
 
-      // 3) insert (attempt to return id directly)
-      const { data: ins, error: insErr } = await supabase
-        .from('projects')
-        .insert(payload)
-        .select('id')
-        .single();
-      if (insErr) {
+      // 3) insert via helper which shows errors and returns created row (if select used)
+      let created: any = null;
+      try {
+        created = await insertRow('projects', payload, {
+          select: 'id',
+          entity: 'โครงการ',
+          successMessage: 'สร้างโครงการสำเร็จ',
+        });
+      } catch (insErr: any) {
+        // insertRow already showed a friendly toast; map to message for form
         const friendly = friendlyDbMessage(insErr as any, {
           entity: 'โครงการ',
           labels: {
@@ -258,29 +261,11 @@ export function ProjectForm() {
             longitude: 'ลองจิจูด',
           }
         });
-        toast.error(friendly);
         setMsg(friendly);
         return;
       }
 
-      let newId = Array.isArray(ins) ? (ins as any)[0]?.id : (ins as any)?.id;
-
-      // 4) defensive fallback: fetch latest for this org if id not visible due to RLS
-      if (!newId) {
-        const { data: latest } = await supabase
-          .from("projects")
-          .select("id")
-          .eq("org_id", orgId)
-          // ใช้คอลัมน์เวลาที่มีจริงในตารางของคุณ: created_at/inserted_at
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        newId = latest?.id;
-      }
-
-      toast.success("สร้างโครงการสำเร็จ");
-
-      // 5) invalidate project-related caches so dashboard updates immediately
+      // 4) invalidate project-related caches so dashboard updates immediately
       try {
         await afterProjectChange(orgId);
       } catch (cacheErr) {
@@ -288,11 +273,28 @@ export function ProjectForm() {
         console.warn('afterProjectChange failed', cacheErr);
       }
 
-      // 6) redirect — ถ้าได้ id ไปหน้า detail, ไม่ได้ให้ไป list
-      if (newId) {
-        void router.push(`/projects/${newId}`);
-        return; // important: stop here to avoid falling through
+      // If server returned the created id, redirect straight to the detail page.
+      if (created?.id) {
+        void router.push(`/projects/${created.id}`);
+        return;
       }
+
+      // For RLS or other cases where insert didn't return id, attempt a defensive lookup.
+      try {
+        const { data: latest } = await supabase
+          .from("projects")
+          .select("id")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latest?.id) {
+          void router.push(`/projects/${latest.id}`);
+          return;
+        }
+      } catch (_) {}
+
+      // Fallback: go to listing
       void router.push("/projects");
     } catch (err: any) {
       console.error("create project failed:", err);

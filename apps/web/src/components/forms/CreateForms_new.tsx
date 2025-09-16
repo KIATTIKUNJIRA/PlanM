@@ -1,4 +1,7 @@
 import dynamic from "next/dynamic";
+import { showPgErrorToast } from '@/lib/dbErrors';
+import { afterProjectChange } from '@/lib/afterProjectChange';
+import { useRouter } from 'next/router';
 const MapPicker = dynamic(() => import("@/components/map/MapPicker"), { ssr: false });
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -125,6 +128,30 @@ function useFloors(orgId?: string, buildingId?: string) {
   return items;
 }
 
+/** Whitelist project table columns to avoid PostgREST unknown column errors */
+function pickKnownProjectColumns(raw: Record<string, any>) {
+  // Map legacy/local keys to DB schema keys if needed
+  const mapped = { ...raw };
+  if (mapped.kind && !mapped.type) mapped.type = mapped.kind; // rename if table uses 'type'
+  // Potential alternate column names (manager vs project_manager)
+  if (mapped.manager && !mapped.project_manager) mapped.project_manager = mapped.manager;
+  // geometry synonyms
+  if (mapped.boundary && !mapped.geometry) mapped.geometry = mapped.boundary;
+
+  const allowed = new Set([
+    'org_id','code','name','type','status','address','latitude','longitude',
+    'started_at','ended_at','manager','project_manager','geometry','boundary','kind','project_kind'
+  ]);
+  const out: Record<string, any> = {};
+  for (const k of Object.keys(mapped)) {
+    if (allowed.has(k) && mapped[k] !== undefined) out[k] = mapped[k];
+  }
+  // Prefer canonical keys
+  if (out.kind && !out.type && out.project_kind == null) { out.type = out.kind; }
+  if (out.project_kind && !out.type) { out.type = out.project_kind; }
+  return out;
+}
+
 /** ============ Organization ============ */
 export function OrgForm() {
   const [name, setName] = useState("");
@@ -187,6 +214,7 @@ export function OrgForm() {
 /** ============ Project ============ */
 export function ProjectForm() {
   const { orgs } = useOrgs();
+  const router = useRouter();
 
   const [orgId, setOrgId] = useState<string>("");
   const [name, setName] = useState("");
@@ -217,30 +245,45 @@ export function ProjectForm() {
     if (lat && isNaN(latitude!))  return alert("ละติจูดไม่ถูกต้อง");
     if (lng && isNaN(longitude!)) return alert("ลองจิจูดไม่ถูกต้อง");
 
-    setSaving(true);
-    const { error } = await supabase.from("projects").insert({
+    const rawPayload: Record<string, any> = {
       org_id: orgId,
       name: name.trim(),
       code: code || null,
-      project_kind: kind,
+      kind,               // will be mapped to type if necessary
+      project_kind: kind,  // keep original in case schema uses this
       address: address || null,
       latitude,
       longitude,
-    });
-    setSaving(false);
+      // placeholders for optional fields if form extended later
+      status: 'planned',
+    };
+    const payload = pickKnownProjectColumns(rawPayload);
 
-    if (error) {
-      alert("สร้างโครงการไม่สำเร็จ: " + error.message);
-      return;
+    setSaving(true);
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .insert(payload)
+        .select('id, org_id')
+        .single();
+      if (error) {
+        console.error('Project insert payload keys:', Object.keys(payload));
+        showPgErrorToast(error, (m) => alert(m), { entity: 'โครงการ', labels: { code: 'รหัสโครงการ', type: 'ประเภท' } });
+        return;
+      }
+      const newId = data?.id;
+      if (newId) {
+        await afterProjectChange(orgId);
+        alert('สร้างโครงการสำเร็จ');
+        router.replace(`/projects/${newId}?created=1`);
+      } else {
+        alert('สร้างโครงการสำเร็จ (ไม่พบ ID)');
+      }
+    } finally {
+      setSaving(false);
+      // reset some fields but keep org selection
+      setName(''); setCode(''); setAddress(''); setLat(''); setLng('');
     }
-
-    alert("สร้างโครงการสำเร็จ");
-    setName("");
-    setCode("");
-    setAddress("");
-    // เก็บค่า orgId เดิมไว้ แต่เคลียร์พิกัด
-    setLat("");
-    setLng("");
   };
 
   return (
