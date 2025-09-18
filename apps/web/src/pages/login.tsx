@@ -15,7 +15,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) return setMsg(error.message);
-    router.replace("/create");
+    router.replace("/");
   };
 
   const signUp = async () => {

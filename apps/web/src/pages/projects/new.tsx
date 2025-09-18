@@ -428,7 +428,7 @@ export default function NewProjectPage() {
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 left-0 right-0 mt-6 py-3 px-4 flex items-center justify-end gap-2">
+        <div className="bottom-0 left-0 right-0 mt-6 py-3 px-4 flex items-center justify-end gap-2">
           <button type="button" onClick={resetForm} className="rounded-lg border px-4 py-2 bg-white hover:bg-gray-50">ล้างข้อมูล</button>
           <button
             disabled={!canCreate || saving}
