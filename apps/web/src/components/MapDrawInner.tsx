@@ -1,90 +1,114 @@
-import React, { useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
+"use client";
+
+import React, { forwardRef, useImperativeHandle } from "react";
+import { MapContainer, TileLayer, FeatureGroup, useMap } from "react-leaflet";
+import L, { FeatureGroup as FeatureGroupType } from "leaflet";
+import "leaflet/dist/leaflet.css";
+import "@geoman-io/leaflet-geoman-free";
+import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 
 export type MapDrawInnerHandle = { clear: () => void };
 
-export default forwardRef(function MapDrawInner(
-  { initialGeometry, onChange, center = [13.736717, 100.523186], zoom = 6 }: { initialGeometry?: any; onChange?: (g: any) => void; center?: [number, number]; zoom?: number },
-  ref: React.Ref<MapDrawInnerHandle | null>
-) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
+type Props = {
+  initialGeometry?: any;
+  onChange?: (g: any) => void;
+  center?: [number, number];
+  zoom?: number;
+};
 
-  useImperativeHandle(ref, () => ({
-    clear: () => {
-      const r = rootRef.current as any;
-      if (!r) return;
-      const drawn = r.__leaflet_drawn as any;
-      if (drawn && drawn.clearLayers) drawn.clearLayers();
-      if (onChange) onChange(null);
+function GeomanControls({
+  drawnGroup,
+  onChange,
+  initialGeometry,
+}: {
+  drawnGroup: React.MutableRefObject<FeatureGroupType | null>;
+  onChange?: (g: any) => void;
+  initialGeometry?: any;
+}) {
+  const map = useMap();
+
+  React.useEffect(() => {
+    if (!map || !drawnGroup.current) return;
+
+    // Add Geoman controls
+    map.pm.addControls({
+      position: "topleft",
+      drawMarker: true,
+      drawPolygon: true,
+      drawRectangle: true,
+      drawCircle: true,
+      editMode: true,
+      removalMode: true,
+    });
+
+    // events
+    map.on("pm:create", (e: any) => {
+      drawnGroup.current?.addLayer(e.layer);
+      onChange?.(e.layer.toGeoJSON());
+    });
+
+    map.on("pm:edit", (e: any) => {
+      let last: any = null;
+      e.layers.eachLayer((l: any) => (last = l));
+      if (last) onChange?.(last.toGeoJSON());
+    });
+
+    map.on("pm:remove", () => {
+      const layers = drawnGroup.current?.getLayers() || [];
+      if (layers.length === 0) onChange?.(null);
+      else onChange?.(layers[layers.length - 1].toGeoJSON());
+    });
+
+    // Load initial geometry
+    if (initialGeometry) {
+      const g = L.geoJSON(initialGeometry);
+      g.eachLayer((ly) => drawnGroup.current?.addLayer(ly));
+      onChange?.(initialGeometry);
+      const b = (drawnGroup.current as any)?.getBounds?.();
+      if (b?.isValid()) map.fitBounds(b);
     }
-  }), [onChange]);
+  }, [map, drawnGroup, onChange, initialGeometry]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const root = rootRef.current;
-    if (!root) return;
+  return null;
+}
 
-    function addCss(id: string, href: string) {
-      if (!document.getElementById(id)) {
-        const l = document.createElement('link'); l.id = id; l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l);
-      }
-    }
-    function loadScript(src: string, id: string) {
-      return new Promise<void>((resolve, reject) => {
-        if ((window as any)[id]) return resolve();
-        if (document.getElementById(id)) return resolve();
-        const s = document.createElement('script'); s.id = id; s.src = src; s.async = true;
-        s.onload = () => { (window as any)[id] = true; resolve(); };
-        s.onerror = () => reject(new Error('failed to load ' + src));
-        document.body.appendChild(s);
-      });
-    }
+const MapDrawInner = forwardRef<MapDrawInnerHandle, Props>(
+  ({ initialGeometry, onChange, center = [13.736717, 100.523186], zoom = 7 }, ref) => {
+    const drawnGroupRef = React.useRef<FeatureGroupType | null>(null);
 
-    addCss('leaflet-css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
-    addCss('geoman-css', 'https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css');
-
-    (async () => {
-      try {
-        await loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', 'leaflet-js');
-        await loadScript('https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js', 'geoman-js');
-
-        const L = (window as any).L;
-        const r = root as any;
-        const existing = r.__leaflet_map as any;
-        const map = existing || L.map(root).setView(center, zoom);
-
-        if (!existing) L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-        const drawn = r.__leaflet_drawn || L.featureGroup().addTo(map);
-        r.__leaflet_drawn = drawn;
-
-        try { map.pm.addControls({ position: 'topleft', drawMarker: true, drawPolygon: true, drawRectangle: true, drawCircle: true, editMode: true, removalMode: true }); } catch (err) {}
-
-        if (!r.__leaflet_events_attached) {
-          map.on('pm:create', (e: any) => { try { drawn.addLayer(e.layer); if (onChange) onChange(e.layer.toGeoJSON()); } catch (err) {} });
-          map.on('pm:edit', (e: any) => { try { let last: any = null; e.layers.eachLayer((l: any) => last = l); if (last && onChange) onChange(last.toGeoJSON()); } catch (err) {} });
-          map.on('pm:remove', (e: any) => { try { if (e && e.layer) drawn.removeLayer(e.layer); const rem = drawn.getLayers(); if (!rem || rem.length === 0) { if (onChange) onChange(null); } else { if (onChange) onChange(rem[rem.length-1].toGeoJSON()); } } catch (err) {} });
-          r.__leaflet_events_attached = true;
+    // ให้ parent สามารถ clear ได้
+    useImperativeHandle(ref, () => ({
+      clear: () => {
+        if (drawnGroupRef.current) {
+          drawnGroupRef.current.clearLayers();
+          onChange?.(null);
         }
+      },
+    }));
 
-        r.__leaflet_map = map;
+    return (
+      <div className="w-full h-[575px] rounded-lg overflow-hidden border">
+        <MapContainer
+          center={center}
+          zoom={zoom}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap contributors"
+          />
+          <FeatureGroup ref={drawnGroupRef as any}>
+            <GeomanControls
+              drawnGroup={drawnGroupRef}
+              onChange={onChange}
+              initialGeometry={initialGeometry}
+            />
+          </FeatureGroup>
+        </MapContainer>
+      </div>
+    );
+  }
+);
 
-        if (initialGeometry) {
-          try {
-            const g = L.geoJSON(initialGeometry);
-            g.eachLayer((ly: any) => drawn.addLayer(ly));
-            if (onChange) onChange(initialGeometry);
-            const b = drawn.getBounds && drawn.getBounds();
-            if (b && b.isValid && b.isValid()) map.fitBounds(b);
-          } catch (err) {}
-        }
-
-      } catch (err) { console.error('MapDrawInner init failed', err); }
-    })();
-
-    return () => {
-      // keep map instance on element for reuse
-    };
-  }, [initialGeometry, onChange, center.join(','), zoom]);
-
-  return <div ref={rootRef} className="w-full h-[570px] rounded-lg overflow-hidden border" />;
-});
+MapDrawInner.displayName = "MapDrawInner";
+export default MapDrawInner;

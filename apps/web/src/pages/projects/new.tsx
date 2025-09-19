@@ -10,10 +10,21 @@ import useThaiProvinceHierarchy, { useAmphures, useTambons } from '@/hooks/useTh
 import useThaiGeo, { findPostal } from '@/hooks/useThaiGeo';
 import ThaiDatePicker from '@/components/ThaiDatePicker';
 import DashboardLayout from '@/components/DashboardLayout';
-import MapDrawInner, { MapDrawInnerHandle } from '@/components/MapDrawInner';
 import { PROJECT_TYPE_OPTIONS } from '@/constants/projectTypes';
 import { THAI_PROVINCES } from '@/constants/thaiProvinces';
 import { z } from 'zod';
+
+// import MapDrawInner, { MapDrawInnerHandle } from '@/components/MapDrawInner';
+
+import dynamic from "next/dynamic";
+
+const MapDrawInner = dynamic(
+  () => import("@/components/MapDrawInner"),
+  { ssr: false } // ❌ ปิด SSR กัน error window is not defined
+);
+
+import type { MapDrawInnerHandle } from "@/components/MapDrawInner";
+
 
 // --- Schema สำหรับตรวจสอบข้อมูลก่อนบันทึก ---
 const ProjectSchema = z.object({
@@ -437,7 +448,6 @@ export default function NewProjectPage() {
           >
             {saving ? 'กำลังบันทึก…' : 'สร้างโครงการ'}
           </button>
-          <button type="button" onClick={() => mapRef.current?.clear()} className="rounded-lg border px-3 py-1 bg-white hover:bg-gray-50">ล้าง Geometry</button>
           <button type="button" onClick={() => setShowGeometryModal(true)} className="rounded-lg border px-4 py-2 bg-white hover:bg-gray-50">แสดง Geometry</button>
         </div>
       </DashboardLayout>
