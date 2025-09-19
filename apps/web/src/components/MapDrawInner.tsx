@@ -1,11 +1,12 @@
 "use client";
 
 import React, { forwardRef, useImperativeHandle } from "react";
-import { MapContainer, TileLayer, FeatureGroup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, FeatureGroup } from "react-leaflet";
+import { EditControl } from "react-leaflet-draw";
 import L, { FeatureGroup as FeatureGroupType } from "leaflet";
+
 import "leaflet/dist/leaflet.css";
-import "@geoman-io/leaflet-geoman-free";
-import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
+import "leaflet-draw/dist/leaflet.draw.css";
 
 export type MapDrawInnerHandle = { clear: () => void };
 
@@ -16,67 +17,19 @@ type Props = {
   zoom?: number;
 };
 
-function GeomanControls({
-  drawnGroup,
-  onChange,
-  initialGeometry,
-}: {
-  drawnGroup: React.MutableRefObject<FeatureGroupType | null>;
-  onChange?: (g: any) => void;
-  initialGeometry?: any;
-}) {
-  const map = useMap();
-
-  React.useEffect(() => {
-    if (!map || !drawnGroup.current) return;
-
-    // Add Geoman controls
-    map.pm.addControls({
-      position: "topleft",
-      drawMarker: true,
-      drawPolygon: true,
-      drawRectangle: true,
-      drawCircle: true,
-      editMode: true,
-      removalMode: true,
-    });
-
-    // events
-    map.on("pm:create", (e: any) => {
-      drawnGroup.current?.addLayer(e.layer);
-      onChange?.(e.layer.toGeoJSON());
-    });
-
-    map.on("pm:edit", (e: any) => {
-      let last: any = null;
-      e.layers.eachLayer((l: any) => (last = l));
-      if (last) onChange?.(last.toGeoJSON());
-    });
-
-    map.on("pm:remove", () => {
-      const layers = drawnGroup.current?.getLayers() || [];
-      if (layers.length === 0) onChange?.(null);
-      else onChange?.(layers[layers.length - 1].toGeoJSON());
-    });
-
-    // Load initial geometry
-    if (initialGeometry) {
-      const g = L.geoJSON(initialGeometry);
-      g.eachLayer((ly) => drawnGroup.current?.addLayer(ly));
-      onChange?.(initialGeometry);
-      const b = (drawnGroup.current as any)?.getBounds?.();
-      if (b?.isValid()) map.fitBounds(b);
-    }
-  }, [map, drawnGroup, onChange, initialGeometry]);
-
-  return null;
-}
-
 const MapDrawInner = forwardRef<MapDrawInnerHandle, Props>(
-  ({ initialGeometry, onChange, center = [13.736717, 100.523186], zoom = 7 }, ref) => {
+  (
+    {
+      initialGeometry,
+      onChange,
+      center = [14.311213971302406, 101.53048441081357],
+      zoom = 14,
+    },
+    ref
+  ) => {
     const drawnGroupRef = React.useRef<FeatureGroupType | null>(null);
 
-    // ให้ parent สามารถ clear ได้
+    // ✅ ให้ parent เรียก clear ได้
     useImperativeHandle(ref, () => ({
       clear: () => {
         if (drawnGroupRef.current) {
@@ -85,6 +38,28 @@ const MapDrawInner = forwardRef<MapDrawInnerHandle, Props>(
         }
       },
     }));
+
+    const handleCreated = (e: any) => {
+      const layer = e.layer;
+      drawnGroupRef.current?.addLayer(layer);
+      const allGeoJSON = drawnGroupRef.current?.toGeoJSON();
+      onChange?.(allGeoJSON);
+    };
+
+    const handleEdited = () => {
+      const allGeoJSON = drawnGroupRef.current?.toGeoJSON();
+      onChange?.(allGeoJSON);
+    };
+
+    const handleDeleted = () => {
+      const layers = drawnGroupRef.current?.getLayers() || [];
+      if (layers.length === 0) {
+        onChange?.(null);
+      } else {
+        const allGeoJSON = drawnGroupRef.current?.toGeoJSON();
+        onChange?.(allGeoJSON);
+      }
+    };
 
     return (
       <div className="w-full h-[575px] rounded-lg overflow-hidden border">
@@ -98,10 +73,19 @@ const MapDrawInner = forwardRef<MapDrawInnerHandle, Props>(
             attribution="&copy; OpenStreetMap contributors"
           />
           <FeatureGroup ref={drawnGroupRef as any}>
-            <GeomanControls
-              drawnGroup={drawnGroupRef}
-              onChange={onChange}
-              initialGeometry={initialGeometry}
+            <EditControl
+              position="topleft"
+              onCreated={handleCreated}
+              onEdited={handleEdited}
+              onDeleted={handleDeleted}
+              draw={{
+                polygon: true,
+                rectangle: true,
+                circle: true,
+                polyline: false,
+                marker: false,
+                circlemarker: false,
+              }}
             />
           </FeatureGroup>
         </MapContainer>
